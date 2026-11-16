@@ -1,42 +1,48 @@
-"""Ventana de Mi Cotizador (Tkinter)."""
+"""Ventana de Mi Cotizador (Tkinter): inicio de sesión, registro, panel de admin y conversor."""
 import tkinter as tk
 from tkinter import ttk
 
-from mi_cotizador import historial
-from mi_cotizador.logica import EntradaInvalida, convertir
+from mi_cotizador import pocketbase
+from mi_cotizador.logica import EntradaInvalida, convertir, formato_numero
+from mi_cotizador.panel import PanelAdmin
+from mi_cotizador.pantalla_historial import PantallaHistorial
+from mi_cotizador.pantallas import PantallaLogin, PantallaRegistro
 
 
-def formato_usd(valor):
-    return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+class Conversor(ttk.Frame):
+    def __init__(self, master, sesion, al_cerrar_sesion, ver_historial, volver_al_panel=None):
+        super().__init__(master, padding=20)
+        self.sesion = sesion
 
+        cabecera = ttk.Frame(self)
+        cabecera.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        ttk.Label(cabecera, text=sesion.email).pack(side="left")
+        ttk.Button(cabecera, text="Cerrar sesión", command=al_cerrar_sesion).pack(side="right")
+        if volver_al_panel is not None:
+            ttk.Button(cabecera, text="Volver al panel", command=volver_al_panel).pack(
+                side="right", padx=6
+            )
 
-class Cotizador(tk.Tk):
-    def __init__(self):
-        super().__init__()
-        self.title("Mi Cotizador")
-        self.resizable(False, False)
+        ttk.Label(self, text="Monto en pesos:").grid(row=1, column=0, sticky="w", pady=4)
+        self.monto = ttk.Entry(self, width=20)
+        self.monto.grid(row=1, column=1, pady=4, padx=(10, 0))
 
-        marco = ttk.Frame(self, padding=20)
-        marco.grid()
+        ttk.Label(self, text="Cotización del dólar:").grid(row=2, column=0, sticky="w", pady=4)
+        self.cotizacion = ttk.Entry(self, width=20)
+        self.cotizacion.grid(row=2, column=1, pady=4, padx=(10, 0))
 
-        ttk.Label(marco, text="Monto en pesos:").grid(row=0, column=0, sticky="w", pady=4)
-        self.monto = ttk.Entry(marco, width=20)
-        self.monto.grid(row=0, column=1, pady=4, padx=(10, 0))
+        botones = ttk.Frame(self)
+        botones.grid(row=3, column=0, columnspan=2, pady=10)
+        ttk.Button(botones, text="Convertir", command=self.convertir).pack(side="left", padx=4)
+        ttk.Button(botones, text="Mi historial", command=ver_historial).pack(side="left", padx=4)
 
-        ttk.Label(marco, text="Cotización del dólar:").grid(row=1, column=0, sticky="w", pady=4)
-        self.cotizacion = ttk.Entry(marco, width=20)
-        self.cotizacion.grid(row=1, column=1, pady=4, padx=(10, 0))
+        self.resultado = ttk.Label(self, text="", font=("Segoe UI", 12, "bold"))
+        self.resultado.grid(row=4, column=0, columnspan=2)
+        self.aviso = ttk.Label(self, text="", foreground="#b00020", wraplength=300)
+        self.aviso.grid(row=5, column=0, columnspan=2)
 
-        ttk.Button(marco, text="Convertir", command=self.convertir).grid(
-            row=2, column=0, columnspan=2, pady=10
-        )
-
-        self.resultado = ttk.Label(marco, text="", font=("Segoe UI", 12, "bold"))
-        self.resultado.grid(row=3, column=0, columnspan=2)
-        self.aviso = ttk.Label(marco, text="", foreground="#b00020", wraplength=300)
-        self.aviso.grid(row=4, column=0, columnspan=2)
-
-        self.bind("<Return>", lambda _e: self.convertir())
+        self.monto.bind("<Return>", lambda _e: self.convertir())
+        self.cotizacion.bind("<Return>", lambda _e: self.convertir())
         self.monto.focus()
 
     def convertir(self):
@@ -47,11 +53,63 @@ class Cotizador(tk.Tk):
         except EntradaInvalida as e:
             self.aviso.config(text=str(e))
             return
-        self.resultado.config(text=f"{formato_usd(usd)} USD")
+        self.resultado.config(text=f"{formato_numero(usd)} USD")
+        self.update_idletasks()
         try:
-            historial.guardar(monto, cot, usd)
-        except OSError:
-            self.aviso.config(text="No se pudo guardar en historial.txt.")
+            pocketbase.guardar_consulta(self.sesion, monto, cot, usd)
+        except pocketbase.ErrorPocketBase:
+            self.aviso.config(text="No se pudo guardar la consulta en tu historial.")
+
+
+class Cotizador(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Mi Cotizador")
+        self.resizable(False, False)
+        self.pantalla = None
+        self.sesion = None
+        self.mostrar_login()
+
+    def _mostrar(self, pantalla):
+        if self.pantalla is not None:
+            self.pantalla.destroy()
+        self.pantalla = pantalla
+        pantalla.pack()
+
+    def mostrar_login(self, mensaje=""):
+        self.sesion = None
+        login = PantallaLogin(self, self.entrar, self.mostrar_registro)
+        self._mostrar(login)
+        login.reiniciar(mensaje)
+
+    def mostrar_registro(self):
+        registro = PantallaRegistro(
+            self,
+            lambda email: self.mostrar_login("Cuenta creada. Ya podés iniciar sesión."),
+            self.mostrar_login,
+        )
+        self._mostrar(registro)
+        registro.reiniciar()
+
+    def entrar(self, sesion):
+        """Tras iniciar sesión: los admins ven el panel, los demás el conversor."""
+        self.sesion = sesion
+        if sesion.es_admin:
+            self.mostrar_panel()
+        else:
+            self.mostrar_conversor()
+
+    def mostrar_panel(self):
+        self._mostrar(PanelAdmin(self, self.sesion, self.mostrar_conversor, self.mostrar_login))
+
+    def mostrar_conversor(self):
+        volver = self.mostrar_panel if self.sesion.es_admin else None
+        self._mostrar(
+            Conversor(self, self.sesion, self.mostrar_login, self.mostrar_historial, volver)
+        )
+
+    def mostrar_historial(self):
+        self._mostrar(PantallaHistorial(self, self.sesion, self.mostrar_conversor))
 
 
 def main():

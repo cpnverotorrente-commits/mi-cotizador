@@ -7,5 +7,8 @@ build/
 dist/
 *.spec
 
+# PocketBase (binario y base de datos locales)
+pocketbase/
+
 # Datos generados al usar la app
 historial.txt
