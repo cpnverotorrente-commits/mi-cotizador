@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+
+# PyInstaller (se regenera con build.bat)
+build/
+dist/
+*.spec
+
+# Datos generados al usar la app
+historial.txt
